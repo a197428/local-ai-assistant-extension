@@ -42,6 +42,9 @@ export default function App() {
 	const [copied, setCopied] = useState(false);
 
 	const wsRef = useRef<WebSocket | null>(null);
+	const wsReconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const wsRetryRef = useRef(0);
+	const mountedRef = useRef(true);
 	const messagesEndRef = useRef<HTMLDivElement>(null);
 
 	// Автоскролл к последнему сообщению
@@ -51,24 +54,38 @@ export default function App() {
 
 	// Подключение WebSocket
 	useEffect(() => {
+		mountedRef.current = true;
+
 		const connectWebSocket = () => {
+			if (!mountedRef.current) return;
+
 			const ws = new WebSocket(
 				`${API_BASE.replace('http', 'ws')}/ws/${sessionId}`,
 			);
 
 			ws.onopen = () => {
+				if (!mountedRef.current) return;
+				wsRetryRef.current = 0;
 				setWsStatus('connected');
 				console.log('[WS] Connected');
 			};
 
 			ws.onclose = () => {
+				if (!mountedRef.current) return;
 				setWsStatus('disconnected');
-				console.log('[WS] Disconnected, reconnecting in 3s');
-				setTimeout(connectWebSocket, 3000);
+				const delay = Math.min(1000 * 2 ** wsRetryRef.current, 30000);
+				wsRetryRef.current++;
+				console.log(`[WS] Disconnected, reconnecting in ${delay}ms`);
+				wsReconnectRef.current = setTimeout(connectWebSocket, delay);
 			};
 
 			ws.onerror = error => {
 				console.error('[WS] Error:', error);
+				if (!mountedRef.current) return;
+				setAgentStatus({
+					state: 'error',
+					message: 'Ошибка соединения с сервером',
+				});
 			};
 
 			ws.onmessage = event => {
@@ -92,10 +109,16 @@ export default function App() {
 						case 'error':
 							setIsLoading(false);
 							setAgentStatus({ state: 'error', message: data.message });
+							setMessages(prev =>
+								updateLastMessage(prev, `❌ ${data.message || 'Неизвестная ошибка'}`),
+							);
 							break;
 					}
 				} catch (err) {
 					console.error('[WS] Parse error:', err);
+					setMessages(prev =>
+						updateLastMessage(prev, '❌ Ошибка чтения ответа сервера'),
+					);
 				}
 			};
 
@@ -105,6 +128,10 @@ export default function App() {
 		connectWebSocket();
 
 		return () => {
+			mountedRef.current = false;
+			if (wsReconnectRef.current) {
+				clearTimeout(wsReconnectRef.current);
+			}
 			wsRef.current?.close();
 		};
 	}, [sessionId]);
@@ -137,6 +164,8 @@ export default function App() {
 				...updated[lastIndex],
 				content: updated[lastIndex].content + content,
 			};
+		} else {
+			updated.push({ role: 'assistant', content, timestamp: Date.now() });
 		}
 
 		return updated;
@@ -277,7 +306,15 @@ export default function App() {
 
 		// Пробуем отправить через WebSocket
 		if (wsRef.current?.readyState === WebSocket.OPEN) {
-			wsRef.current.send(JSON.stringify(payload));
+			try {
+				wsRef.current.send(JSON.stringify(payload));
+			} catch (err) {
+				console.error('[WS] Send error:', err);
+				setMessages(prev =>
+					updateLastMessage(prev, '❌ Ошибка отправки сообщения'),
+				);
+				setIsLoading(false);
+			}
 			return;
 		}
 
@@ -288,6 +325,13 @@ export default function App() {
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(payload),
 			});
+
+			if (!response.ok) {
+				const errorText = await response.text().catch(() => '');
+				const errorMsg = `❌ Ошибка сервера (${response.status})${errorText ? `: ${errorText}` : ''}`;
+				setMessages(prev => updateLastMessage(prev, errorMsg));
+				return;
+			}
 
 			const data = await response.json();
 			setMessages(prev => updateLastMessage(prev, data.response));

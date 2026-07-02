@@ -22,6 +22,7 @@ wheels/
 .env
 venv/
 env/
+backend.log
 
 # Node
 node_modules/
