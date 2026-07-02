@@ -1,183 +1,252 @@
 # Local AI Assistant Chrome Extension
 
-Chrome расширение с локальным AI-ассистентом, подключенным к бэкенду на Python (FastAPI + LangGraph). Ассистент имеет доступ к содержимому страниц, может выполнять поиск в интернете через EXA API и отвечает на вопросы в реальном времени.
+Локальный AI-ассистент для Chrome, который открывается в боковой панели, читает контекст текущей страницы и помогает быстро разобраться в содержимом: пересказать, объяснить, найти недостающие факты в интернете и сохранить диалог в Markdown.
+
+Проект собран как связка Chrome MV3 extension + Python backend. Расширение работает с UI на React, а backend на FastAPI запускает LangGraph-агента с OpenAI-compatible DeepSeek API и поиском через EXA.
+
+## Возможности
+
+- Боковая панель Chrome с чат-интерфейсом.
+- Автоматическое извлечение текста, meta-тегов и форм с текущей страницы.
+- Ответы по контексту открытой вкладки.
+- Интернет-поиск через EXA, когда данных страницы недостаточно.
+- WebSocket-ответы со статусами `thinking`, `searching`, `responding`.
+- REST fallback, если WebSocket временно недоступен.
+- Устойчивое переподключение WebSocket с backoff.
+- Экспорт диалога в Markdown: копирование в буфер или скачивание `.md`.
+- Набор frontend-тестов для WS lifecycle, ошибок и fallback-сценариев.
+
+## Стек
+
+**Extension**
+
+- Chrome Manifest V3
+- React 19
+- TypeScript
+- Vite
+- Tailwind CSS
+- shadcn-style UI primitives
+- Vitest + Testing Library
+
+**Backend**
+
+- Python 3.10+
+- FastAPI
+- Uvicorn
+- LangGraph
+- LangChain OpenAI-compatible client
+- DeepSeek-compatible API endpoint
+- EXA API
+
+## Архитектура
+
+```text
+Chrome Side Panel (React)
+        |
+        | WebSocket / REST
+        v
+FastAPI Backend
+        |
+        v
+LangGraph Agent
+        |
+        +-- DeepSeek-compatible LLM
+        +-- EXA search tools
+
+Chrome Background Service Worker
+        |
+        v
+Content Script -> Page text/forms/meta extraction
+```
 
 ## Структура проекта
 
-```
-├── backend/              # Python FastAPI бэкенд
-│   ├── .env             # Переменные окружения (ключи API)
-│   ├── agent.py         # LangGraph агент
-│   ├── main.py          # FastAPI сервер
-│   ├── requirements.txt # Зависимости Python
-│   ├── run.sh           # Скрипт запуска
-│   ├── state.py         # Состояние агента
-│   └── tools.py         # Инструменты поиска (EXA)
-├── extension/           # Chrome расширение (MV3)
-│   ├── src/             # Исходный код React/TypeScript
-│   ├── public/          # Статические файлы (manifest, скрипты)
-│   ├── background.js    # Service Worker
-│   ├── content.js       # Content Script
-│   ├── manifest.json    # Конфигурация расширения
-│   ├── package.json     # Зависимости Node.js
-│   ├── vite.config.ts   # Конфигурация сборки
-│   └── ...
-└── README.md            # Эта документация
+```text
+├── backend/
+│   ├── agent.py          # LangGraph agent
+│   ├── main.py           # FastAPI app
+│   ├── requirements.txt  # Python dependencies
+│   ├── run.sh            # Backend launcher
+│   ├── state.py          # Agent state
+│   └── tools.py          # EXA tools
+├── extension/
+│   ├── public/           # MV3 static files: manifest, background, content
+│   ├── src/
+│   │   ├── sidepanel/    # React side panel app and tests
+│   │   ├── components/   # UI components
+│   │   └── test/         # Test setup
+│   ├── package.json
+│   ├── vite.config.ts
+│   └── vitest.config.ts
+└── README.md
 ```
 
 ## Требования
 
 - Python 3.10+ и pip
 - Node.js 20+ и npm
-- Chrome браузер (версия 120+)
-- API ключи:
-  - [DeepSeek API](https://platform.deepseek.com/) (или другой совместимый провайдер)
-  - [EXA API](https://exa.ai/) (для поиска в интернете)
+- Chrome 120+
+- API keys:
+  - `DEEPSEEK_API_KEY`
+  - `EXA_API_KEY`
 
 ## Быстрый старт
 
-### 1. Настройка бэкенда
+### 1. Backend
 
 ```bash
 cd backend
-
-# Создание виртуального окружения (опционально)
 python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# или venv\Scripts\activate  # Windows
-
-# Установка зависимостей
+source venv/bin/activate
 pip install -r requirements.txt
-
-# Настройка переменных окружения
 cp .env.example .env
-# Отредактируйте .env, добавьте ваши API ключи:
-# DEEPSEEK_API_KEY=ваш_ключ
-# EXA_API_KEY=ваш_ключ
-
-# Запуск сервера
-./run.sh
-# или вручную:
-# uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-Сервер будет доступен по адресу: `http://localhost:8000`
+Заполните `.env`:
 
-Проверка работоспособности: `http://localhost:8000/health`
+```env
+DEEPSEEK_API_KEY=your_deepseek_api_key
+DEEPSEEK_BASE_URL=https://routerai.ru/api/v1
+DEEPSEEK_MODEL=deepseek/deepseek-v3.2
+EXA_API_KEY=your_exa_api_key
+HOST=0.0.0.0
+PORT=8000
+```
 
-### 2. Настройка расширения
+Запуск:
+
+```bash
+./run.sh
+```
+
+Проверка:
+
+```bash
+curl http://localhost:8000/health
+```
+
+Ожидаемый ответ:
+
+```json
+{
+  "status": "healthy",
+  "deepseek_configured": true,
+  "exa_configured": true
+}
+```
+
+### 2. Extension
 
 ```bash
 cd extension
-
-# Установка зависимостей
 npm install
-
-# Сборка расширения в режиме разработки (с отслеживанием изменений)
-npm run dev
+npm run build
 ```
 
-### 3. Загрузка расширения в Chrome
+### 3. Загрузка в Chrome
 
-1. Откройте `chrome://extensions/`
-2. Включите "Режим разработчика" (Developer mode)
-3. Нажмите "Загрузить распакованное расширение" (Load unpacked)
-4. Выберите папку `extension/dist` (после сборки) или `extension` (для разработки с `npm run dev`)
+1. Откройте `chrome://extensions/`.
+2. Включите Developer mode.
+3. Нажмите Load unpacked.
+4. Выберите папку `extension/dist`.
+5. Откройте любую страницу и нажмите иконку Local AI Assistant.
 
-### 4. Использование
+Если backend запущен, в боковой панели должен появиться статус `Онлайн`.
 
-- Нажмите на иконку расширения в панели инструментов Chrome (или используйте хоткей `Ctrl+Shift+E`)
-- Откроется боковая панель с AI ассистентом
-- Задавайте вопросы о текущей странице или просите найти информацию в интернете
+## Команды разработки
 
-## API ключи
+### Extension
 
-### DeepSeek API
+```bash
+cd extension
+npm run dev        # watch build для разработки расширения
+npm run build      # production build в dist/
+npm run typecheck  # TypeScript check
+npm run test       # Vitest tests
+```
 
-1. Зарегистрируйтесь на [DeepSeek Platform](https://platform.deepseek.com/)
-2. Получите API ключ в личном кабинете
-3. Укажите его в `.env` как `DEEPSEEK_API_KEY`
+### Backend
 
-### EXA API (поиск в интернете)
+```bash
+cd backend
+./run.sh
+```
 
-1. Зарегистрируйтесь на [exa.ai](https://exa.ai/)
-2. Получите API ключ
-3. Укажите его в `.env` как `EXA_API_KEY`
+Основные endpoints:
 
-## Разработка
+- `GET /health`
+- `POST /chat/{session_id}`
+- `WS /ws/{session_id}`
+- `DELETE /session/{session_id}`
 
-### Бэкенд
+## Тесты
 
-- Редактируйте файлы в `backend/`
-- Сервер автоматически перезагружается при изменениях (благодаря `--reload`)
-- Для отладки агента используйте `curl` или тестовые запросы
+Frontend покрывает основные runtime-сценарии side panel:
 
-### Расширение
+- WebSocket connected/disconnected states.
+- Exponential reconnect backoff.
+- Cleanup после unmount.
+- Backend error messages в чате.
+- Non-JSON WebSocket messages.
+- REST fallback при HTTP 500 и fetch failure.
+- Ошибки отправки WebSocket.
+- Token append и сброс loading на `done`.
 
-- Исходный код: `extension/src/`
-- Статические файлы: `extension/public/`
-- `npm run dev` — сборка с отслеживанием изменений
-- `npm run build` — production сборка
-- `npm run typecheck` — проверка типов TypeScript
+Запуск:
 
-## Архитектура
+```bash
+cd extension
+npm run test
+```
 
-### Бэкенд (FastAPI)
+## Экспорт Markdown
 
-- **WebSocket** (`/ws/{session_id}`) — стриминг ответов в реальном времени
-- **REST API** (`/chat/{session_id}`) — фоллбэк для совместимости
-- **LangGraph агент** — управляет диалогом и использованием инструментов
-- **Инструменты**:
-  - `exa_search_tool` — поиск в интернете
-  - `exa_answer_tool` — прямые ответы на вопросы
+Диалог можно:
 
-### Расширение (Chrome MV3)
+- скопировать в буфер обмена;
+- скачать как `.md` файл.
 
-- **Service Worker** (`background.js`) — управление расширением, коммуникация с контент-скриптами
-- **Content Script** (`content.js`) — извлечение информации со страницы
-- **Side Panel** (`sidepanel.html`) — интерфейс ассистента (React + TypeScript)
-- **WebSocket клиент** — подключение к бэкенду для стриминга
+Экспорт включает дату, URL страницы, заголовок страницы, роли сообщений и временные метки.
 
-## Экспорт диалога в Markdown
+## Troubleshooting
 
-Расширение позволяет сохранять диалог с AI-ассистентом в формате Markdown:
+### Side panel показывает `Оффлайн`
 
-### Функции экспорта:
+Проверьте, что backend запущен:
 
-1. **Копировать в буфер обмена** — кнопка с иконкой копирования в шапке расширения
-2. **Скачать как файл** — кнопка с иконкой загрузки для сохранения `.md` файла
+```bash
+curl http://localhost:8000/health
+```
 
-### Формат экспорта:
+Если соединения нет, запустите:
 
-- Заголовок с датой и временем
-- Информация о текущей странице (URL, заголовок)
-- Весь диалог с пометками "Пользователь" и "Ассистент"
-- Сохранение форматирования и временных меток
+```bash
+cd backend
+./run.sh
+```
 
-### Использование:
-
-1. Проведите диалог с ассистентом
-2. Нажмите кнопку "Копировать" для быстрого копирования в буфер обмена
-3. Или нажмите "Скачать" для сохранения файла Markdown
-
-## Возможные проблемы
+Затем перезагрузите расширение на `chrome://extensions/` или закройте и откройте side panel.
 
 ### Расширение не загружается
 
-- Убедитесь, что используется Chrome 120+
-- Проверьте, что папка `dist` существует (после `npm run build` или `npm run dev`)
+- Убедитесь, что выполнен `npm run build`.
+- Загружайте именно `extension/dist`.
+- Проверьте ошибки на странице `chrome://extensions/`.
 
-### Бэкенд не запускается
+### Модель не отвечает
 
-- Проверьте, установлены ли все зависимости Python
-- Убедитесь, что файл `.env` существует и содержит корректные API ключи
-- Проверьте, не занят ли порт 8000
+- Проверьте `DEEPSEEK_API_KEY`.
+- Проверьте `DEEPSEEK_BASE_URL` и `DEEPSEEK_MODEL`.
+- Посмотрите логи терминала, где запущен backend.
 
-### Нет ответа от ассистента
+### Поиск не работает
 
-- Проверьте, запущен ли бэкенд (`http://localhost:8000/health`)
-- Убедитесь, что API ключи действительны
-- Проверьте консоль расширения (F12 → вкладка Extension)
+- Проверьте `EXA_API_KEY`.
+- Убедитесь, что у backend есть доступ к интернету.
+
+## Репозиторий
+
+GitHub: https://github.com/a197428/local-ai-assistant-extension
 
 ## Лицензия
 
