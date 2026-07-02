@@ -1,14 +1,12 @@
 // Background Service Worker
 // ВАЖНО: Этот файл НЕ обрабатывается Vite, остается чистым JS
 
-// Открываем боковую панель при клике на иконку расширения
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 
-// Обработчик сообщений
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'GET_PAGE_CONTEXT') {
     getPageContext(sender.tab?.id).then(sendResponse);
-    return true; // Асинхронный ответ
+    return true;
   }
 });
 
@@ -28,26 +26,85 @@ async function getPageContext(tabId) {
         title: tab.title || '',
         url: tab.url || '',
         text: '',
-        forms: []
+        forms: [],
+        _blocked: true,
       };
     }
   } catch {
-    return { title: '', url: '', text: '', forms: [] };
+    return { title: '', url: '', text: '', forms: [], _blocked: true };
   }
 
   try {
-    // Пробуем получить контекст через content script
     return await chrome.tabs.sendMessage(tabId, { type: 'EXTRACT_PAGE' });
   } catch {
-    // Fallback: выполняем скрипт напрямую
     const [result] = await chrome.scripting.executeScript({
       target: { tabId },
-      func: () => ({
-        title: document.title,
-        url: window.location.href,
-        text: document.body.innerText.slice(0, 5000),
-        forms: []
-      })
+      func: () => {
+        const sensitiveUrlPatterns = [
+          /^chrome:\/\//,
+          /^chrome-extension:\/\//,
+          /^file:\/\//,
+          /^about:/,
+        ];
+        const sensitiveFieldTypes = new Set([
+          'password', 'email', 'tel', 'credit-card',
+          'cc-number', 'cc-exp', 'cc-csc',
+        ]);
+        const sensitiveFieldNames = /password|passwd|secret|token|api[_-]?key|credit|card|ssn|pin/i;
+        const url = window.location.href;
+
+        if (sensitiveUrlPatterns.some(pattern => pattern.test(url))) {
+          return {
+            title: document.title,
+            url,
+            text: '',
+            forms: [],
+            meta: {},
+            _blocked: true,
+          };
+        }
+
+        const clone = document.body?.cloneNode(true);
+        if (clone) {
+          clone
+            .querySelectorAll('script, style, noscript, iframe, input, textarea, select')
+            .forEach(el => el.remove());
+        }
+
+        const text = (clone?.innerText || clone?.textContent || '')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 5000);
+
+        const isSensitiveField = el => {
+          if (sensitiveFieldTypes.has(el.type)) return true;
+          if (sensitiveFieldNames.test(el.name)) return true;
+          if (sensitiveFieldNames.test(el.id)) return true;
+          const label = el.labels?.[0]?.textContent || '';
+          return sensitiveFieldNames.test(label);
+        };
+
+        const forms = Array.from(document.forms).slice(0, 5).map((form, index) => ({
+          id: form.id || `form_${index}`,
+          action: form.action,
+          method: form.method,
+          fields: Array.from(form.elements)
+            .filter(el => el.name && el.type !== 'hidden' && !isSensitiveField(el))
+            .slice(0, 20)
+            .map(el => ({
+              name: el.name,
+              type: el.type,
+              label: el.labels?.[0]?.textContent?.trim() || '',
+            })),
+        }));
+
+        return {
+          title: document.title,
+          url,
+          text,
+          forms,
+        };
+      }
     });
     return result?.result || { title: '', url: '', text: '', forms: [] };
   }

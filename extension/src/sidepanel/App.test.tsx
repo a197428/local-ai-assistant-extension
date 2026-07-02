@@ -286,3 +286,34 @@ describe('WS message handling', () => {
     expect(container.querySelector('input')).not.toBeDisabled();
   });
 });
+
+describe('Security: privacy indicator', () => {
+  it('shows privacy indicator when page context is available', async () => {
+    mockSendMessage.mockResolvedValueOnce({
+      title: 'Test Page',
+      url: 'http://example.com',
+      text: 'hello',
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/контекст будет отправлен в AI/)).toBeInTheDocument();
+    });
+  });
+
+  it('shows blocked indicator for sensitive pages', async () => {
+    mockSendMessage.mockResolvedValueOnce({
+      title: 'Settings',
+      url: 'chrome://settings',
+      text: '',
+      _blocked: true,
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/защищённая страница/)).toBeInTheDocument();
+    });
+  });
+});

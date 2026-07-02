@@ -3,7 +3,9 @@
 
 echo "🔄 Загружаю переменные окружения из .env..."
 if [ -f .env ]; then
-  export $(cat .env | xargs)
+  set -a
+  source .env
+  set +a
   echo "✅ Переменные окружения загружены"
 else
   echo "⚠️ Файл .env не найден, используем значения по умолчанию"
@@ -23,4 +25,4 @@ else
   PYTHON_CMD="uvicorn"
 fi
 
-$PYTHON_CMD main:app --host ${HOST:-0.0.0.0} --port ${PORT:-8000} --reload
+$PYTHON_CMD main:app --host ${HOST:-127.0.0.1} --port ${PORT:-8000} --reload

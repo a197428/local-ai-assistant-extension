@@ -20,6 +20,7 @@ interface PageContext {
 	text: string;
 	forms?: any[];
 	meta?: Record<string, string>;
+	_blocked?: boolean;
 }
 
 interface AgentStatus {
@@ -404,7 +405,11 @@ export default function App() {
 			{/* Информация о странице */}
 			{pageInfo?.title && (
 				<div className='px-3 py-2 border-b bg-muted/50 text-sm text-muted-foreground truncate'>
-					📄 {pageInfo.title}
+					{pageInfo._blocked ? (
+						<span>🔒 Контекст страницы не собирается (защищённая страница)</span>
+					) : (
+						<span>📄 {pageInfo.title} — контекст будет отправлен в AI</span>
+					)}
 				</div>
 			)}
 
